@@ -242,6 +242,99 @@
   .dotted-divider {
     border-top: 1px dashed var(--border-strong);
   }
+
+  /* Pink pill (birthdays) */
+  .pill-pink { background: #FCE7F3; color: #BE185D; }
+
+  /* Calendar grid */
+  .cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .cal-header-cell {
+    background: #FBFBF7;
+    padding: 0.625rem 0.5rem;
+    text-align: center;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-subtle);
+  }
+  .cal-day {
+    background: var(--surface);
+    padding: 0.5rem;
+    min-height: 92px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    cursor: pointer;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .cal-day:hover { background: #FAFAF5; }
+  .cal-day-empty {
+    background: #F8F8F3;
+    cursor: default;
+    min-height: 60px;
+  }
+  .cal-day-other { background: #FBFBF7; }
+  .cal-day-other .cal-day-num { color: var(--ink-subtle); }
+  .cal-day-today {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .cal-day-today:hover { background: #F8DDD7; }
+  .cal-day-selected {
+    background: #F4F4F0;
+    box-shadow: inset 0 0 0 2px var(--ink);
+  }
+  .cal-day-num {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .cal-event {
+    font-size: 0.6875rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+  .cal-event-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .cal-service-badge {
+    position: absolute;
+    top: 6px; right: 6px;
+    font-size: 0.625rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.04em;
+  }
+  .cal-more {
+    font-size: 0.6875rem;
+    color: var(--ink-muted);
+    padding: 0 0.375rem;
+  }
+  @media (max-width: 640px) {
+    .cal-day { min-height: 64px; padding: 0.25rem; }
+    .cal-day-num { font-size: 0.75rem; }
+    .cal-event { padding: 0.0625rem 0.25rem; font-size: 0.625rem; }
+    .cal-header-cell { padding: 0.375rem 0.25rem; font-size: 0.5625rem; }
+  }
 </style>
 </head>
 <body>
@@ -265,6 +358,23 @@ const ROLES = [
 ];
 
 const ROLES_FOR_PEOPLE = ['presider','songLeader','preacher','pastoralPrayer','communionAssistant1','communionAssistant2'];
+
+const EVENT_TYPES = [
+  { key: 'bible-study',    label: 'Bible Study',    pill: 'warning', dot: '#D97706' },
+  { key: 'prayer-meeting', label: 'Prayer Meeting', pill: 'success', dot: '#16A34A' },
+  { key: 'birthday',       label: 'Birthday',       pill: 'pink',    dot: '#DB2777' },
+  { key: 'meeting',        label: 'Meeting',        pill: 'info',    dot: '#2563EB' },
+  { key: 'fellowship',     label: 'Fellowship',     pill: 'accent',  dot: '#A33B2A' },
+  { key: 'other',          label: 'Other',          pill: 'default', dot: '#71717A' },
+];
+
+const RECURRENCE_TYPES = [
+  { key: 'none',    label: "Doesn't repeat" },
+  { key: 'daily',   label: 'Daily' },
+  { key: 'weekly',  label: 'Weekly' },
+  { key: 'monthly', label: 'Monthly' },
+  { key: 'yearly',  label: 'Yearly' },
+];
 
 const STORAGE_KEY = 'flcc-schedule-os-v1';
 const APP_VERSION = '1.0';
@@ -433,11 +543,23 @@ function defaultState() {
     workers: SEED_WORKERS,
     themes: SEED_THEMES,
     schedule: SEED_SCHEDULE,
+    events: [],
     currentMonth: '2026-06',
     settings: {
       ignoredDateMismatches: [],   // ids where user said "keep this date"
     },
   };
+}
+
+// Migration: ensure newly added fields exist on older saved state
+function migrate(state) {
+  if (!state) return state;
+  const s = { ...state };
+  if (!Array.isArray(s.events)) s.events = [];
+  if (!s.workers) s.workers = [];
+  // Ensure each worker has a birthday field (empty string is fine)
+  s.workers = s.workers.map(w => ({ ...w, birthday: w.birthday || '' }));
+  return s;
 }
 
 // =============================================================================
@@ -531,6 +653,195 @@ function countAssignments(workers, schedule, fromDate, toDate) {
 }
 
 // =============================================================================
+// CALENDAR / EVENT HELPERS
+// =============================================================================
+
+function formatISODate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function todayISO() { return formatISODate(new Date()); }
+
+function addDays(iso, n) {
+  const d = parseISODate(iso);
+  d.setDate(d.getDate() + n);
+  return formatISODate(d);
+}
+
+function daysInMonth(year, monthIndex) { return new Date(year, monthIndex + 1, 0).getDate(); }
+
+// Compute occurrences of an event within a date range (inclusive)
+function getEventOccurrences(event, rangeStart, rangeEnd) {
+  if (!event.date) return [];
+  const occurrences = [];
+  const startDate = parseISODate(event.date);
+  if (event.recurrence === 'none' || !event.recurrence) {
+    if (event.date >= rangeStart && event.date <= rangeEnd) occurrences.push(event.date);
+    return occurrences;
+  }
+  let cur = new Date(startDate);
+  const end = parseISODate(rangeEnd);
+  let safety = 2000;
+  while (cur <= end && safety-- > 0) {
+    const iso = formatISODate(cur);
+    if (iso >= rangeStart && iso <= rangeEnd) occurrences.push(iso);
+    switch (event.recurrence) {
+      case 'daily':   cur.setDate(cur.getDate() + 1); break;
+      case 'weekly':  cur.setDate(cur.getDate() + 7); break;
+      case 'monthly': cur.setMonth(cur.getMonth() + 1); break;
+      case 'yearly':  cur.setFullYear(cur.getFullYear() + 1); break;
+      default: return occurrences;
+    }
+  }
+  return occurrences;
+}
+
+// Convert worker-attached birthdays into virtual yearly events for a given range
+function getWorkerBirthdayEvents(workers, rangeStart, rangeEnd) {
+  const out = [];
+  const startYear = parseISODate(rangeStart).getFullYear();
+  const endYear = parseISODate(rangeEnd).getFullYear();
+  for (const w of workers) {
+    if (!w.birthday || !/^\d{2}-\d{2}$/.test(w.birthday)) continue;
+    if (w.status && w.status !== 'active') continue;
+    for (let y = startYear; y <= endYear; y++) {
+      const iso = `${y}-${w.birthday}`;
+      if (iso >= rangeStart && iso <= rangeEnd) {
+        out.push({
+          id: `birthday-${w.id}-${y}`,
+          title: `${workerDisplay(w)}'s Birthday`,
+          type: 'birthday',
+          date: iso,
+          startTime: null, endTime: null,
+          location: '', notes: '',
+          recurrence: 'yearly',
+          showOnDashboard: true,  // birthdays always show on dashboard
+          isAutoGenerated: true,
+          linkedWorkerId: w.id,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+// Combine user events + worker birthdays for a range, expanded into occurrences
+function getAllEventsInRange(events, workers, rangeStart, rangeEnd) {
+  const out = [];
+  for (const e of events) {
+    const occs = getEventOccurrences(e, rangeStart, rangeEnd);
+    for (const date of occs) {
+      out.push({ ...e, date, _isOccurrence: date !== e.date });
+    }
+  }
+  // Add worker birthdays
+  out.push(...getWorkerBirthdayEvents(workers, rangeStart, rangeEnd));
+  // Sort by date+time
+  out.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    const ta = a.startTime || '00:00';
+    const tb = b.startTime || '00:00';
+    return ta.localeCompare(tb);
+  });
+  return out;
+}
+
+// Get events on a specific date (including service days, birthdays)
+function getEventsOnDate(date, events, workers, schedule) {
+  const dayEvents = getAllEventsInRange(events, workers, date, date);
+  const services = schedule.filter(s => s.date === date);
+  return { events: dayEvents, services };
+}
+
+// =============================================================================
+// ICS GENERATION (for "Save to calendar" feature)
+// =============================================================================
+
+function escapeICS(text) {
+  if (!text) return '';
+  return String(text).replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;');
+}
+
+function formatICSDateTime(year, month, day, hour, min) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${year}${pad(month)}${pad(day)}T${pad(hour)}${pad(min)}00`;
+}
+
+function formatICSDate(iso) { return iso.replace(/-/g, ''); }
+
+function formatICSStamp() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth()+1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+}
+
+function eventToVEvent(event) {
+  const lines = ['BEGIN:VEVENT'];
+  lines.push(`UID:${event.id}@flcc-schedule-os`);
+  lines.push(`DTSTAMP:${formatICSStamp()}`);
+
+  if (event.startTime) {
+    const [y, m, d] = event.date.split('-').map(Number);
+    const [sh, sm] = event.startTime.split(':').map(Number);
+    lines.push(`DTSTART:${formatICSDateTime(y, m, d, sh, sm)}`);
+    if (event.endTime) {
+      const [eh, em] = event.endTime.split(':').map(Number);
+      lines.push(`DTEND:${formatICSDateTime(y, m, d, eh, em)}`);
+    } else {
+      // default 1-hour duration
+      lines.push(`DTEND:${formatICSDateTime(y, m, d, sh + 1, sm)}`);
+    }
+  } else {
+    // All-day
+    lines.push(`DTSTART;VALUE=DATE:${formatICSDate(event.date)}`);
+    lines.push(`DTEND;VALUE=DATE:${formatICSDate(addDays(event.date, 1))}`);
+  }
+
+  lines.push(`SUMMARY:${escapeICS(event.title)}`);
+  if (event.location) lines.push(`LOCATION:${escapeICS(event.location)}`);
+  if (event.notes) lines.push(`DESCRIPTION:${escapeICS(event.notes)}`);
+
+  if (event.recurrence && event.recurrence !== 'none') {
+    lines.push(`RRULE:FREQ=${event.recurrence.toUpperCase()}`);
+  }
+
+  lines.push('END:VEVENT');
+  return lines.join('\r\n');
+}
+
+function eventsToICSFile(events, calendarName = 'FLCC Schedule OS') {
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//FLCC Schedule OS//EN',
+    'CALSCALE:GREGORIAN',
+    `X-WR-CALNAME:${escapeICS(calendarName)}`,
+  ];
+  for (const e of events) lines.push(eventToVEvent(e));
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+function downloadICS(filename, content) {
+  const blob = new Blob([content], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+function eventTypeMeta(typeKey) {
+  return EVENT_TYPES.find(t => t.key === typeKey) || EVENT_TYPES[EVENT_TYPES.length - 1];
+}
+
+// =============================================================================
 // REDUCER
 // =============================================================================
 
@@ -570,8 +881,12 @@ function reducer(state, action) {
     case 'ADD_WORKER': return { ...state, workers: [...state.workers, action.worker] };
     case 'UPDATE_WORKER': return { ...state, workers: state.workers.map(w => w.id === action.worker.id ? action.worker : w) };
     case 'DELETE_WORKER': return { ...state, workers: state.workers.filter(w => w.id !== action.workerId) };
-    case 'IMPORT_DATA': return action.payload;
+    case 'IMPORT_DATA': return migrate(action.payload);
     case 'RESET': return defaultState();
+    case 'ADD_EVENT': return { ...state, events: [...(state.events || []), action.event] };
+    case 'UPDATE_EVENT': return { ...state, events: (state.events || []).map(e => e.id === action.event.id ? action.event : e) };
+    case 'DELETE_EVENT': return { ...state, events: (state.events || []).filter(e => e.id !== action.eventId) };
+    case 'TOGGLE_EVENT_DASHBOARD': return { ...state, events: (state.events || []).map(e => e.id === action.eventId ? { ...e, showOnDashboard: !e.showOnDashboard } : e) };
     default: return state;
   }
 }
@@ -857,10 +1172,95 @@ function DashboardTab({ state, dispatch }) {
         <ServiceGlance title="Sunday Service" entries={sundays} workers={state.workers} />
       </div>
 
+      {/* Calendar cards */}
+      <div className="grid md:grid-cols-2 gap-4 mt-4">
+        <UpcomingEventsCard state={state} />
+        <BirthdaysThisMonthCard state={state} />
+      </div>
+
       {monthEntries.length === 0 && (
         <div className="card p-8 mt-6 text-center">
           <div className="font-display text-xl mb-2">No schedule for {formatMonthLabel(month)} yet</div>
           <p className="ink-muted text-sm mb-4">Head to the Schedule tab to add Friday and Sunday service dates.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UpcomingEventsCard({ state }) {
+  const today = todayISO();
+  const horizon = addDays(today, 30);
+  const all = getAllEventsInRange(state.events || [], state.workers, today, horizon);
+  // Show only flagged events + birthdays (which auto-flag)
+  const visible = all.filter(e => e.showOnDashboard || e.type === 'birthday').slice(0, 6);
+
+  return (
+    <div className="card p-5">
+      <div className="text-xs font-medium tracking-widest uppercase ink-subtle mb-3">Upcoming · next 30 days</div>
+      {visible.length === 0 ? (
+        <div className="ink-subtle italic text-sm">No upcoming events flagged for the dashboard. Toggle "Show on Dashboard" when creating an event.</div>
+      ) : (
+        <div className="space-y-3">
+          {visible.map((e, i) => {
+            const meta = eventTypeMeta(e.type);
+            const dateLabel = parseISODate(e.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+            const isToday = e.date === today;
+            return (
+              <div key={`${e.id}-${i}`} className="flex items-start gap-3 pb-3" style={{ borderBottom: '1px dashed var(--border-strong)' }}>
+                <span className="cal-event-dot mt-1.5" style={{ background: meta.dot, flexShrink: 0 }}></span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{e.title}</div>
+                  <div className="text-xs ink-muted mt-0.5">
+                    {isToday ? <Pill tone="accent" className="mr-1">Today</Pill> : null}
+                    {dateLabel}
+                    {e.startTime ? ` · ${e.startTime}${e.endTime ? '–' + e.endTime : ''}` : ''}
+                    {e.location ? ` · ${e.location}` : ''}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BirthdaysThisMonthCard({ state }) {
+  const now = new Date();
+  const monthStr = String(now.getMonth() + 1).padStart(2, '0');
+  const todayDay = now.getDate();
+  const birthdays = (state.workers || [])
+    .filter(w => w.birthday && /^\d{2}-\d{2}$/.test(w.birthday) && w.birthday.startsWith(monthStr))
+    .map(w => ({
+      worker: w,
+      day: parseInt(w.birthday.split('-')[1], 10),
+    }))
+    .sort((a, b) => a.day - b.day);
+
+  return (
+    <div className="card p-5">
+      <div className="text-xs font-medium tracking-widest uppercase ink-subtle mb-3">🎂 Birthdays this month</div>
+      {birthdays.length === 0 ? (
+        <div className="ink-subtle italic text-sm">No birthdays on file for {MONTH_NAMES[now.getMonth()]}. Add birthdays in the Workers tab.</div>
+      ) : (
+        <div className="space-y-2">
+          {birthdays.map(({ worker, day }) => {
+            const isToday = day === todayDay;
+            const isPast = day < todayDay;
+            return (
+              <div key={worker.id} className="flex items-center gap-3 py-1.5">
+                <div className="font-mono text-xs ink-muted" style={{ width: 36, flexShrink: 0 }}>
+                  {MONTH_NAMES[now.getMonth()].slice(0,3)} {day}
+                </div>
+                <div className="flex-1 text-sm" style={{ opacity: isPast ? 0.5 : 1 }}>
+                  {workerDisplay(worker)}
+                </div>
+                {isToday && <Pill tone="pink">Today 🎉</Pill>}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
@@ -1152,6 +1552,7 @@ function WorkersTab({ state, dispatch }) {
               <th>Name</th>
               <th>Type</th>
               <th>Eligible Roles</th>
+              <th>Birthday</th>
               <th>Assignments (4mo)</th>
               <th>Status</th>
               <th></th>
@@ -1160,6 +1561,9 @@ function WorkersTab({ state, dispatch }) {
           <tbody>
             {filtered.map(w => {
               const c = counts.get(w.id);
+              const bday = w.birthday && /^\d{2}-\d{2}$/.test(w.birthday)
+                ? `${MONTH_NAMES[parseInt(w.birthday.split('-')[0],10)-1].slice(0,3)} ${parseInt(w.birthday.split('-')[1],10)}`
+                : null;
               return (
                 <tr key={w.id}>
                   <td className="font-medium">{workerDisplay(w)}</td>
@@ -1173,6 +1577,7 @@ function WorkersTab({ state, dispatch }) {
                       {w.eligibleRoles.length === 0 && <span className="ink-subtle text-xs italic">none</span>}
                     </div>
                   </td>
+                  <td className="text-xs">{bday ? <Pill tone="pink">🎂 {bday}</Pill> : <span className="ink-subtle italic">—</span>}</td>
                   <td className="font-mono text-xs">{c?.total || 0}</td>
                   <td><Pill tone={w.status === 'active' ? 'success' : 'default'}>{w.status}</Pill></td>
                   <td>
@@ -1243,6 +1648,27 @@ function WorkerEditModal({ worker, onSave, onDelete, onClose }) {
                   {r.label}
                 </label>
               ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Birthday <span className="ink-subtle italic font-normal" style={{ letterSpacing: 0, textTransform: 'none' }}>· optional, month + day</span></label>
+            <div className="grid grid-cols-2 gap-2 mt-1">
+              <select className="select" value={w.birthday ? w.birthday.split('-')[0] : ''} onChange={e => {
+                const m = e.target.value;
+                const d = w.birthday ? w.birthday.split('-')[1] : '';
+                setW({ ...w, birthday: m && d ? `${m}-${d}` : (m ? `${m}-01` : '') });
+              }}>
+                <option value="">Month</option>
+                {MONTH_NAMES.map((m, i) => <option key={i} value={String(i+1).padStart(2,'0')}>{m}</option>)}
+              </select>
+              <select className="select" value={w.birthday ? w.birthday.split('-')[1] : ''} onChange={e => {
+                const m = w.birthday ? w.birthday.split('-')[0] : '';
+                const d = e.target.value;
+                setW({ ...w, birthday: m && d ? `${m}-${d}` : '' });
+              }} disabled={!w.birthday}>
+                <option value="">Day</option>
+                {Array.from({ length: 31 }, (_, i) => <option key={i} value={String(i+1).padStart(2,'0')}>{i+1}</option>)}
+              </select>
             </div>
           </div>
           <div>
@@ -1534,12 +1960,422 @@ function DataTab({ state, dispatch }) {
 }
 
 // =============================================================================
+// CALENDAR TAB
+// =============================================================================
+
+function CalendarTab({ state, dispatch }) {
+  const month = state.currentMonth;
+  const [year, monthIdx] = useMemo(() => {
+    const [y, m] = month.split('-').map(Number);
+    return [y, m - 1];
+  }, [month]);
+
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [editingEvent, setEditingEvent] = useState(null);
+
+  // Range: month ± buffer for grid display
+  const firstDay = `${month}-01`;
+  const lastDay = `${month}-${String(daysInMonth(year, monthIdx)).padStart(2, '0')}`;
+  const gridStart = (() => {
+    const d = parseISODate(firstDay);
+    d.setDate(d.getDate() - d.getDay()); // back to Sunday
+    return formatISODate(d);
+  })();
+  const gridEnd = (() => {
+    const d = parseISODate(lastDay);
+    d.setDate(d.getDate() + (6 - d.getDay())); // forward to Saturday
+    return formatISODate(d);
+  })();
+
+  const allEvents = useMemo(
+    () => getAllEventsInRange(state.events || [], state.workers, gridStart, gridEnd),
+    [state.events, state.workers, gridStart, gridEnd]
+  );
+
+  const eventsByDate = useMemo(() => {
+    const m = new Map();
+    for (const e of allEvents) {
+      if (!m.has(e.date)) m.set(e.date, []);
+      m.get(e.date).push(e);
+    }
+    return m;
+  }, [allEvents]);
+
+  const servicesByDate = useMemo(() => {
+    const m = new Map();
+    for (const s of state.schedule) {
+      if (!m.has(s.date)) m.set(s.date, []);
+      m.get(s.date).push(s);
+    }
+    return m;
+  }, [state.schedule]);
+
+  // Build the grid (always 6 weeks = 42 cells for stable layout)
+  const cells = [];
+  let cur = parseISODate(gridStart);
+  for (let i = 0; i < 42; i++) {
+    cells.push(formatISODate(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  const today = todayISO();
+
+  // Upcoming events list: from today, next 60 days
+  const upcomingFrom = today;
+  const upcomingTo = addDays(today, 60);
+  const upcoming = useMemo(
+    () => getAllEventsInRange(state.events || [], state.workers, upcomingFrom, upcomingTo),
+    [state.events, state.workers, upcomingFrom, upcomingTo]
+  );
+
+  const exportAllToICS = () => {
+    const userEvents = state.events || [];
+    const birthdays = (state.workers || [])
+      .filter(w => w.birthday && /^\d{2}-\d{2}$/.test(w.birthday))
+      .map(w => ({
+        id: `birthday-${w.id}`,
+        title: `${workerDisplay(w)}'s Birthday`,
+        type: 'birthday',
+        date: `${new Date().getFullYear()}-${w.birthday}`,
+        startTime: null, endTime: null, location: '', notes: 'Auto-generated from FLCC roster',
+        recurrence: 'yearly',
+      }));
+    const all = [...userEvents, ...birthdays];
+    if (all.length === 0) { alert('No events to export yet.'); return; }
+    const ics = eventsToICSFile(all, `${state.meta.churchName} Calendar`);
+    downloadICS(`flcc-calendar-${todayISO()}.ics`, ics);
+  };
+
+  return (
+    <div className="fade-in">
+      <SectionHeading eyebrow="Activities & birthdays" title="Calendar">
+        Bible studies, prayer meetings, fellowship gatherings, and worker birthdays. Save any event to your phone calendar with one tap.
+      </SectionHeading>
+
+      {/* Month controls */}
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <button className="btn btn-ghost" onClick={() => dispatch({ type: 'SET_CURRENT_MONTH', month: prevMonth(month) })}>←</button>
+            <div className="font-display text-2xl font-semibold">{formatMonthLabel(month)}</div>
+            <button className="btn btn-ghost" onClick={() => dispatch({ type: 'SET_CURRENT_MONTH', month: nextMonth(month) })}>→</button>
+            <button className="btn btn-soft text-xs" onClick={() => dispatch({ type: 'SET_CURRENT_MONTH', month: monthKey(today) })}>Today</button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="btn btn-ghost text-xs" onClick={exportAllToICS} title="Download .ics for Apple/Google calendars">📅 Export all</button>
+            <button className="btn btn-accent" onClick={() => setEditingEvent({
+              id: null, title: '', type: 'bible-study',
+              date: selectedDate || todayISO(),
+              startTime: '19:00', endTime: '21:00',
+              location: '', notes: '',
+              recurrence: 'none', showOnDashboard: false,
+            })}>+ Add Event</button>
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="mt-4 flex flex-wrap gap-3 text-xs ink-muted">
+          {EVENT_TYPES.map(t => (
+            <div key={t.key} className="flex items-center gap-1.5">
+              <span className="cal-event-dot" style={{ background: t.dot }}></span>
+              {t.label}
+            </div>
+          ))}
+          <div className="flex items-center gap-1.5">
+            <span style={{ color: 'var(--accent)', fontWeight: 600, fontSize: '0.625rem' }}>FRI/SUN</span>
+            <span>Service day</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Month grid */}
+      <div className="cal-grid mb-6">
+        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => (
+          <div key={d} className="cal-header-cell">{d}</div>
+        ))}
+        {cells.map(date => {
+          const isOtherMonth = monthKey(date) !== month;
+          const isToday = date === today;
+          const isSelected = date === selectedDate;
+          const dayEvents = eventsByDate.get(date) || [];
+          const services = servicesByDate.get(date) || [];
+          let cls = 'cal-day';
+          if (isOtherMonth) cls += ' cal-day-other';
+          if (isToday) cls += ' cal-day-today';
+          else if (isSelected) cls += ' cal-day-selected';
+
+          return (
+            <div key={date} className={cls} onClick={() => setSelectedDate(date === selectedDate ? null : date)}>
+              <div className="flex items-start justify-between">
+                <span className="cal-day-num">{parseISODate(date).getDate()}</span>
+              </div>
+              {services.length > 0 && (
+                <div className="cal-service-badge">{services[0].service.toUpperCase().slice(0,3)}</div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
+                {dayEvents.slice(0, 3).map(e => {
+                  const meta = eventTypeMeta(e.type);
+                  return (
+                    <div key={e.id} className="cal-event" style={{ background: meta.dot + '20', color: meta.dot }} title={e.title}>
+                      <span className="cal-event-dot" style={{ background: meta.dot }}></span>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.title}</span>
+                    </div>
+                  );
+                })}
+                {dayEvents.length > 3 && (
+                  <div className="cal-more">+{dayEvents.length - 3} more</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Selected day detail */}
+      {selectedDate && (
+        <div className="card p-5 mb-6 fade-in">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-xs font-medium tracking-widest uppercase ink-subtle">Selected day</div>
+              <div className="font-display text-xl font-semibold mt-1">
+                {parseISODate(selectedDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+              </div>
+            </div>
+            <button className="btn btn-soft text-xs" onClick={() => setEditingEvent({
+              id: null, title: '', type: 'bible-study',
+              date: selectedDate,
+              startTime: '19:00', endTime: '21:00',
+              location: '', notes: '',
+              recurrence: 'none', showOnDashboard: false,
+            })}>+ Add on this day</button>
+          </div>
+          <DayEventList
+            date={selectedDate}
+            state={state}
+            dispatch={dispatch}
+            onEdit={(e) => setEditingEvent(e)}
+          />
+        </div>
+      )}
+
+      {/* Upcoming list */}
+      <div className="card p-5">
+        <div className="text-xs font-medium tracking-widest uppercase ink-subtle mb-3">Upcoming · next 60 days</div>
+        {upcoming.length === 0 ? (
+          <div className="ink-subtle italic text-sm">No upcoming events. Click "+ Add Event" above to get started.</div>
+        ) : (
+          <div className="space-y-2">
+            {upcoming.map((e, i) => {
+              const meta = eventTypeMeta(e.type);
+              const dateLabel = parseISODate(e.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+              return (
+                <div key={`${e.id}-${i}`} className="flex items-center gap-3 py-2" style={{ borderBottom: '1px dashed var(--border-strong)' }}>
+                  <div className="font-mono text-xs ink-muted" style={{ width: 90, flexShrink: 0 }}>{dateLabel}</div>
+                  <span className="cal-event-dot" style={{ background: meta.dot, flexShrink: 0 }}></span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{e.title}</div>
+                    <div className="text-xs ink-muted">
+                      {e.startTime ? `${e.startTime}${e.endTime ? '–' + e.endTime : ''}` : 'All day'}
+                      {e.location ? ` · ${e.location}` : ''}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {!e.isAutoGenerated && (
+                      <button className="btn btn-ghost text-xs" onClick={() => {
+                        const userEvent = (state.events || []).find(x => x.id === e.id);
+                        if (userEvent) setEditingEvent({ ...userEvent });
+                      }}>Edit</button>
+                    )}
+                    <button className="btn btn-ghost text-xs" title="Save to phone calendar" onClick={() => {
+                      const ics = eventsToICSFile([e], e.title);
+                      downloadICS(`${e.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`, ics);
+                    }}>📅</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {editingEvent && (
+        <EventModal
+          event={editingEvent}
+          state={state}
+          onSave={(ev) => {
+            if (ev.id) dispatch({ type: 'UPDATE_EVENT', event: ev });
+            else dispatch({ type: 'ADD_EVENT', event: { ...ev, id: `evt-${Date.now()}` } });
+            setEditingEvent(null);
+          }}
+          onDelete={(id) => {
+            if (confirm('Delete this event? This cannot be undone.')) {
+              dispatch({ type: 'DELETE_EVENT', eventId: id });
+              setEditingEvent(null);
+            }
+          }}
+          onClose={() => setEditingEvent(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DayEventList({ date, state, dispatch, onEdit }) {
+  const items = getAllEventsInRange(state.events || [], state.workers, date, date);
+  const services = state.schedule.filter(s => s.date === date);
+
+  if (items.length === 0 && services.length === 0) {
+    return <div className="ink-subtle italic text-sm">Nothing scheduled.</div>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {services.map(s => {
+        const presider = state.workers.find(w => w.id === s.roles.presider);
+        const preacher = state.workers.find(w => w.id === s.roles.preacher);
+        return (
+          <div key={s.id} className="flex items-center gap-3 py-2 px-3 rounded-md" style={{ background: 'var(--accent-soft)' }}>
+            <span className="text-xs font-semibold" style={{ color: 'var(--accent)', letterSpacing: '0.04em' }}>{s.service.toUpperCase()}</span>
+            <div className="flex-1 text-sm">
+              <span className="ink-muted">Service · </span>
+              {s.isSpecial ? <em>{s.specialNote}</em> : (preacher ? `Preacher: ${workerShort(preacher)}` : 'Preacher TBD')}
+              {presider && <span className="ink-muted"> · Presider: {workerShort(presider)}</span>}
+            </div>
+          </div>
+        );
+      })}
+      {items.map(e => {
+        const meta = eventTypeMeta(e.type);
+        return (
+          <div key={e.id} className="flex items-center gap-3 py-2 px-3 rounded-md" style={{ background: meta.dot + '12' }}>
+            <span className="cal-event-dot" style={{ background: meta.dot }}></span>
+            <div className="flex-1">
+              <div className="text-sm font-medium">{e.title}</div>
+              <div className="text-xs ink-muted">
+                {e.startTime ? `${e.startTime}${e.endTime ? '–' + e.endTime : ''}` : 'All day'}
+                {e.location ? ` · ${e.location}` : ''}
+                {e.recurrence && e.recurrence !== 'none' ? ` · repeats ${e.recurrence}` : ''}
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              {!e.isAutoGenerated && (
+                <button className="btn btn-ghost text-xs" onClick={() => {
+                  const userEvent = (state.events || []).find(x => x.id === e.id);
+                  if (userEvent) onEdit({ ...userEvent });
+                }}>Edit</button>
+              )}
+              <button className="btn btn-ghost text-xs" onClick={() => {
+                const ics = eventsToICSFile([e], e.title);
+                downloadICS(`${e.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.ics`, ics);
+              }} title="Save to phone calendar">📅</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EventModal({ event, state, onSave, onDelete, onClose }) {
+  const [e, setE] = useState(event);
+
+  const submit = () => {
+    if (!e.title.trim()) { alert('Title is required.'); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) { alert('Valid date is required.'); return; }
+    onSave(e);
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal p-6 fade-in" onClick={ev => ev.stopPropagation()} style={{ maxWidth: 540 }}>
+        <h3 className="font-display text-2xl font-semibold mb-4">{e.id ? 'Edit Event' : 'New Event'}</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Title</label>
+            <input className="input mt-1" value={e.title} onChange={ev => setE({ ...e, title: ev.target.value })} placeholder="e.g. Wednesday Bible Study" autoFocus />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Type</label>
+            <select className="select mt-1" value={e.type} onChange={ev => setE({ ...e, type: ev.target.value })}>
+              {EVENT_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div>
+              <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Date</label>
+              <input className="input mt-1" type="date" value={e.date} onChange={ev => setE({ ...e, date: ev.target.value })} />
+            </div>
+            <div>
+              <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Start time</label>
+              <input className="input mt-1" type="time" value={e.startTime || ''} onChange={ev => setE({ ...e, startTime: ev.target.value || null })} placeholder="All day" />
+            </div>
+            <div>
+              <label className="text-xs font-medium tracking-widest uppercase ink-subtle">End time</label>
+              <input className="input mt-1" type="time" value={e.endTime || ''} onChange={ev => setE({ ...e, endTime: ev.target.value || null })} placeholder="optional" />
+            </div>
+          </div>
+          <div className="text-xs ink-muted -mt-1">Leave times blank for all-day events.</div>
+
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Repeats</label>
+            <select className="select mt-1" value={e.recurrence || 'none'} onChange={ev => setE({ ...e, recurrence: ev.target.value })}>
+              {RECURRENCE_TYPES.map(t => (
+                <option key={t.key} value={t.key}>
+                  {t.key === 'weekly' && e.date ? `Weekly on ${parseISODate(e.date).toLocaleDateString('en-US', { weekday: 'long' })}s` :
+                   t.key === 'yearly' && e.date ? `Yearly on ${parseISODate(e.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}` :
+                   t.key === 'monthly' && e.date ? `Monthly on the ${parseISODate(e.date).getDate()}${getOrdinalSuffix(parseISODate(e.date).getDate())}` :
+                   t.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Location</label>
+            <input className="input mt-1" value={e.location || ''} onChange={ev => setE({ ...e, location: ev.target.value })} placeholder="e.g. FLCC - Farwaniya 1" />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Notes</label>
+            <textarea className="input mt-1" rows={2} value={e.notes || ''} onChange={ev => setE({ ...e, notes: ev.target.value })} placeholder="Optional details" />
+          </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer pt-1">
+            <input type="checkbox" checked={!!e.showOnDashboard} onChange={ev => setE({ ...e, showOnDashboard: ev.target.checked })} />
+            <span>Show on Dashboard</span>
+          </label>
+        </div>
+
+        <div className="flex justify-between gap-2 mt-6">
+          <div>
+            {e.id && <button className="btn btn-ghost" onClick={() => onDelete(e.id)} style={{ color: 'var(--danger)' }}>Delete</button>}
+          </div>
+          <div className="flex gap-2">
+            <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+            <button className="btn btn-accent" onClick={submit}>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getOrdinalSuffix(n) {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return s[(v - 20) % 10] || s[v] || s[0];
+}
+
+// =============================================================================
 // APP
 // =============================================================================
 
 const TABS = [
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'schedule', label: 'Schedule' },
+  { key: 'calendar', label: 'Calendar' },
   { key: 'workers', label: 'Workers' },
   { key: 'fairness', label: 'Fairness' },
   { key: 'print', label: 'Print' },
@@ -1547,7 +2383,7 @@ const TABS = [
 ];
 
 function App() {
-  const [state, dispatch] = useReducer(reducer, null, () => loadState() || defaultState());
+  const [state, dispatch] = useReducer(reducer, null, () => migrate(loadState()) || defaultState());
   const [activeTab, setActiveTab] = useState('dashboard');
 
   useEffect(() => { saveState(state); }, [state]);
@@ -1581,6 +2417,7 @@ function App() {
       <main className="max-w-7xl mx-auto px-6 py-8">
         {activeTab === 'dashboard' && <DashboardTab state={state} dispatch={dispatch} />}
         {activeTab === 'schedule' && <ScheduleTab state={state} dispatch={dispatch} />}
+        {activeTab === 'calendar' && <CalendarTab state={state} dispatch={dispatch} />}
         {activeTab === 'workers' && <WorkersTab state={state} dispatch={dispatch} />}
         {activeTab === 'fairness' && <FairnessTab state={state} />}
         {activeTab === 'print' && <PrintTab state={state} />}
