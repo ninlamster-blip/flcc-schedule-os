@@ -595,14 +595,51 @@ const SectionHeading = ({ eyebrow, title, children }) => (
 // --- Worker Picker dropdown ---
 function WorkerPicker({ workers, schedule, role, currentValue, onSelect, onClose, beforeDate, excludeIds, anchorRef }) {
   const [search, setSearch] = useState('');
+  const [pos, setPos] = useState({ top: -9999, left: -9999, width: 280, ready: false });
   const ref = useRef(null);
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
+  // Position the dropdown relative to the anchor cell, using fixed positioning
+  // so it escapes any overflow:auto/hidden ancestors (like the table scroll container).
   useEffect(() => {
-    function onClick(e) {
+    function place() {
+      if (!anchorRef?.current) return;
+      const rect = anchorRef.current.getBoundingClientRect();
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const width = vw < 640 ? Math.min(vw - 24, 320) : 280;
+      let left = rect.left;
+      let top = rect.bottom + 4;
+      if (left + width > vw - 8) left = vw - width - 8;
+      if (left < 8) left = 8;
+      // Estimate height; flip up if not enough room below
+      const estH = Math.min(360, vh - 16);
+      if (top + estH > vh - 8) {
+        const above = rect.top - estH - 4;
+        top = above >= 8 ? above : Math.max(8, vh - estH - 8);
+      }
+      setPos({ top, left, width, ready: true });
+    }
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [anchorRef]);
+
+  // Outside-click / outside-touch dismissal
+  useEffect(() => {
+    function onOutside(e) {
       if (ref.current && !ref.current.contains(e.target) && anchorRef?.current && !anchorRef.current.contains(e.target)) onClose();
     }
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('touchstart', onOutside);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('touchstart', onOutside);
+    };
   }, [onClose, anchorRef]);
 
   const ordered = useMemo(() => suggestNext(workers, schedule, role, beforeDate || '9999-12-31', excludeIds || []), [workers, schedule, role, beforeDate, excludeIds]);
@@ -616,11 +653,19 @@ function WorkerPicker({ workers, schedule, role, currentValue, onSelect, onClose
     return list.filter(w => (w.title + ' ' + w.name).toLowerCase().includes(q));
   };
 
-  return (
-    <div ref={ref} className="dropdown fade-in">
+  const dropdown = (
+    <div ref={ref} className="dropdown fade-in" style={{
+      position: 'fixed',
+      top: pos.top,
+      left: pos.left,
+      width: pos.width,
+      zIndex: 100,
+      maxHeight: '60vh',
+      visibility: pos.ready ? 'visible' : 'hidden',
+    }}>
       <div className="px-2 pt-1 pb-2">
         <input
-          autoFocus
+          autoFocus={!isMobile}
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search workers…"
@@ -665,6 +710,8 @@ function WorkerPicker({ workers, schedule, role, currentValue, onSelect, onClose
       )}
     </div>
   );
+
+  return ReactDOM.createPortal(dropdown, document.body);
 }
 
 // --- Editable role cell ---
@@ -956,8 +1003,39 @@ function ScheduleSection({ title, entries, state, dispatch }) {
 
 function ScheduleRow({ entry, state, dispatch }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0, ready: false });
+  const menuBtnRef = useRef(null);
+  const menuRef = useRef(null);
   const handleRoleChange = (role, wid) => dispatch({ type: 'UPDATE_ROLE', entryId: entry.id, role, workerId: wid });
   const dayMismatch = dayOfWeek(entry.date) !== expectedDayForService(entry.service) && !state.settings.ignoredDateMismatches.includes(entry.id);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function place() {
+      if (!menuBtnRef.current) return;
+      const rect = menuBtnRef.current.getBoundingClientRect();
+      const width = 220;
+      let left = rect.right - width;
+      let top = rect.bottom + 4;
+      if (left < 8) left = 8;
+      if (top + 120 > window.innerHeight) top = Math.max(8, rect.top - 120 - 4);
+      setMenuPos({ top, left, ready: true });
+    }
+    place();
+    function onOutside(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target) && menuBtnRef.current && !menuBtnRef.current.contains(e.target)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onOutside);
+    document.addEventListener('touchstart', onOutside);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      document.removeEventListener('mousedown', onOutside);
+      document.removeEventListener('touchstart', onOutside);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [menuOpen]);
 
   return (
     <tr>
@@ -975,10 +1053,13 @@ function ScheduleRow({ entry, state, dispatch }) {
       <td><RoleCell workers={state.workers} schedule={state.schedule} entry={entry} role="communionAssistant1" onChange={handleRoleChange} otherSelectedIds={[entry.roles.communionAssistant2].filter(Boolean)} /></td>
       <td><RoleCell workers={state.workers} schedule={state.schedule} entry={entry} role="communionAssistant2" onChange={handleRoleChange} otherSelectedIds={[entry.roles.communionAssistant1].filter(Boolean)} /></td>
       <td><RoleCell workers={state.workers} schedule={state.schedule} entry={entry} role="foodInCharge" onChange={handleRoleChange} /></td>
-      <td className="relative">
-        <button className="btn btn-ghost text-xs" onClick={() => setMenuOpen(!menuOpen)}>⋯</button>
-        {menuOpen && (
-          <div className="dropdown" style={{ right: 0, top: '100%' }} onMouseLeave={() => setMenuOpen(false)}>
+      <td>
+        <button ref={menuBtnRef} className="btn btn-ghost text-xs" onClick={() => setMenuOpen(!menuOpen)}>⋯</button>
+        {menuOpen && ReactDOM.createPortal(
+          <div ref={menuRef} className="dropdown fade-in" style={{
+            position: 'fixed', top: menuPos.top, left: menuPos.left, width: 220,
+            zIndex: 100, visibility: menuPos.ready ? 'visible' : 'hidden'
+          }}>
             <div className="dropdown-item" onClick={() => {
               const note = entry.isSpecial ? '' : prompt('Special event note (e.g. "Seven Last Words"):', entry.specialNote) || '';
               if (entry.isSpecial || note) dispatch({ type: 'TOGGLE_SPECIAL', entryId: entry.id, note });
@@ -988,7 +1069,8 @@ function ScheduleRow({ entry, state, dispatch }) {
               if (confirm(`Delete ${formatDateShort(entry.date)} ${entry.service}?`)) dispatch({ type: 'REMOVE_ENTRY', entryId: entry.id });
               setMenuOpen(false);
             }} style={{ color: 'var(--danger)' }}>Delete date</div>
-          </div>
+          </div>,
+          document.body
         )}
       </td>
     </tr>
