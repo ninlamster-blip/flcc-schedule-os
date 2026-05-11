@@ -540,13 +540,21 @@ function defaultState() {
       version: APP_VERSION,
       lastUpdated: new Date().toISOString(),
     },
+    ministry: {
+      headName: 'Sis. Amazelle De Jesus',
+      headTitle: 'Fellowship Ministry Head',
+      whatsapp: '',
+      messenger: '',
+      phone: '',
+      email: '',
+    },
     workers: SEED_WORKERS,
     themes: SEED_THEMES,
     schedule: SEED_SCHEDULE,
     events: [],
     currentMonth: '2026-06',
     settings: {
-      ignoredDateMismatches: [],   // ids where user said "keep this date"
+      ignoredDateMismatches: [],
     },
   };
 }
@@ -557,7 +565,11 @@ function migrate(state) {
   const s = { ...state };
   if (!Array.isArray(s.events)) s.events = [];
   if (!s.workers) s.workers = [];
-  // Ensure each worker has a birthday field (empty string is fine)
+  if (!s.ministry) s.ministry = {
+    headName: 'Sis. Amazelle De Jesus',
+    headTitle: 'Fellowship Ministry Head',
+    whatsapp: '', messenger: '', phone: '', email: '',
+  };
   s.workers = s.workers.map(w => ({ ...w, birthday: w.birthday || '' }));
   return s;
 }
@@ -887,6 +899,7 @@ function reducer(state, action) {
     case 'UPDATE_EVENT': return { ...state, events: (state.events || []).map(e => e.id === action.event.id ? action.event : e) };
     case 'DELETE_EVENT': return { ...state, events: (state.events || []).filter(e => e.id !== action.eventId) };
     case 'TOGGLE_EVENT_DASHBOARD': return { ...state, events: (state.events || []).map(e => e.id === action.eventId ? { ...e, showOnDashboard: !e.showOnDashboard } : e) };
+    case 'UPDATE_MINISTRY': return { ...state, ministry: { ...state.ministry, ...action.payload } };
     default: return state;
   }
 }
@@ -1722,6 +1735,8 @@ function FairnessTab({ state }) {
         Who's been carrying the rotation, and who's overdue. Filter by role to spot specialists.
       </SectionHeading>
 
+      <FoodRotationCard state={state} />
+
       <div className="card p-4 mb-6 flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-xs ink-subtle">From</span>
@@ -1759,6 +1774,218 @@ function FairnessTab({ state }) {
       <div className="mt-4 text-xs ink-muted">
         Tip: workers with 0 in this range are good candidates when you need to spread the load. The Schedule tab's dropdowns already sort least-recently-used first.
       </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// FOOD ROTATION CARD — fair-rotation visibility for Sis. Amazelle
+// =============================================================================
+
+function FoodRotationCard({ state }) {
+  const [sortBy, setSortBy] = useState('overdue');  // overdue | name | totalAsc | totalDesc
+  const [showAll, setShowAll] = useState(false);
+
+  const today = todayISO();
+
+  // Build stats for every food-eligible worker (families, pairs, anyone with foodInCharge in eligibleRoles)
+  const stats = useMemo(() => {
+    const foodEligible = state.workers.filter(w => w.status === 'active' && w.eligibleRoles.includes('foodInCharge'));
+
+    return foodEligible.map(w => {
+      const myAssignments = state.schedule
+        .filter(e => e.roles.foodInCharge === w.id)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      const past = myAssignments.filter(e => e.date < today);
+      const future = myAssignments.filter(e => e.date >= today);
+      const last = past.length ? past[past.length - 1] : null;
+      const next = future.length ? future[0] : null;
+      const daysSince = last ? Math.floor((parseISODate(today) - parseISODate(last.date)) / 86400000) : null;
+
+      return {
+        worker: w,
+        total: myAssignments.length,
+        pastCount: past.length,
+        futureCount: future.length,
+        lastDate: last?.date || null,
+        nextDate: next?.date || null,
+        daysSince,
+      };
+    });
+  }, [state.workers, state.schedule, today]);
+
+  // Average days between assignments across everyone who has served
+  const avgInterval = useMemo(() => {
+    const intervals = stats.filter(s => s.daysSince !== null).map(s => s.daysSince);
+    if (intervals.length === 0) return 30;
+    return Math.round(intervals.reduce((a, b) => a + b, 0) / intervals.length);
+  }, [stats]);
+
+  // Classify fairness: 🟢 fair (recent), 🟡 due (~avg), 🔴 overdue (>1.5x avg), ⭐ never
+  const classify = (s) => {
+    if (s.total === 0) return { tone: 'never', label: 'Never served', emoji: '⭐' };
+    if (s.daysSince === null) return { tone: 'fair', label: 'Recent', emoji: '🟢' };
+    if (s.daysSince > avgInterval * 1.5) return { tone: 'overdue', label: 'Overdue', emoji: '🔴' };
+    if (s.daysSince > avgInterval * 0.75) return { tone: 'due', label: 'Due soon', emoji: '🟡' };
+    return { tone: 'fair', label: 'Fair', emoji: '🟢' };
+  };
+
+  // Sort
+  const sorted = useMemo(() => {
+    const arr = stats.slice();
+    if (sortBy === 'overdue') {
+      // Never-served first, then by largest daysSince
+      arr.sort((a, b) => {
+        if (a.total === 0 && b.total !== 0) return -1;
+        if (b.total === 0 && a.total !== 0) return 1;
+        const da = a.daysSince ?? 99999;
+        const db = b.daysSince ?? 99999;
+        return db - da;
+      });
+    } else if (sortBy === 'name') {
+      arr.sort((a, b) => a.worker.name.localeCompare(b.worker.name));
+    } else if (sortBy === 'totalAsc') {
+      arr.sort((a, b) => a.total - b.total || a.worker.name.localeCompare(b.worker.name));
+    } else if (sortBy === 'totalDesc') {
+      arr.sort((a, b) => b.total - a.total || a.worker.name.localeCompare(b.worker.name));
+    }
+    return arr;
+  }, [stats, sortBy]);
+
+  const displayed = showAll ? sorted : sorted.slice(0, 8);
+
+  // Counts
+  const overdue = stats.filter(s => classify(s).tone === 'overdue').length;
+  const never = stats.filter(s => s.total === 0).length;
+  const totalPool = stats.length;
+
+  // Generate fairness defense text Amazelle can share with complaining members
+  const generateDefense = () => {
+    const lines = [];
+    lines.push(`🍽 FLCC Food Rotation — Fair Distribution Report`);
+    lines.push(`As of ${parseISODate(today).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`);
+    lines.push('');
+    lines.push(`Total food rotation pool: ${totalPool} families/pairs`);
+    lines.push(`Average days between assignments: ~${avgInterval} days`);
+    lines.push('');
+    lines.push(`🔴 Overdue (needs to serve soon): ${overdue}`);
+    lines.push(`⭐ Never served (top priority): ${never}`);
+    lines.push('');
+    lines.push(`Recent assignments (last 6 services with food):`);
+    const recentAssignments = state.schedule
+      .filter(e => e.date < today && e.roles.foodInCharge)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 6);
+    for (const e of recentAssignments) {
+      const w = state.workers.find(x => x.id === e.roles.foodInCharge);
+      lines.push(`• ${formatDateShort(e.date)} (${e.service}) — ${w?.name || '?'}`);
+    }
+    lines.push('');
+    lines.push(`The system tracks every assignment and suggests least-recently-used first. Thank you for your patience and service! 🙏`);
+    return lines.join('\n');
+  };
+
+  return (
+    <div className="card p-5 mb-6" style={{ borderColor: '#FED7AA', background: '#FFFBF5' }}>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <div className="text-xs font-medium tracking-widest uppercase" style={{ color: '#C2410C' }}>🍽 Food-in-Charge Rotation</div>
+          <div className="font-display text-2xl font-semibold mt-1">Fair Distribution</div>
+          <p className="text-xs ink-muted mt-1">Avg. {avgInterval} days between turns · {totalPool} in rotation pool</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select className="select" style={{ width: 'auto', fontSize: '0.75rem' }} value={sortBy} onChange={e => setSortBy(e.target.value)}>
+            <option value="overdue">Sort: Most overdue first</option>
+            <option value="totalAsc">Sort: Fewest assignments</option>
+            <option value="totalDesc">Sort: Most assignments</option>
+            <option value="name">Sort: A→Z</option>
+          </select>
+          <button className="btn btn-soft text-xs" onClick={() => {
+            navigator.clipboard.writeText(generateDefense()).then(() => alert('Fair rotation report copied! Paste it in your group chat to defend the schedule.')).catch(() => alert('Copy failed.'));
+          }}>📋 Defense report</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Pool size</div>
+          <div className="font-display text-2xl font-semibold">{totalPool}</div>
+        </div>
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Overdue</div>
+          <div className="font-display text-2xl font-semibold" style={{ color: 'var(--danger)' }}>{overdue}</div>
+        </div>
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Never served</div>
+          <div className="font-display text-2xl font-semibold" style={{ color: '#7E22CE' }}>{never}</div>
+        </div>
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Avg. interval</div>
+          <div className="font-display text-2xl font-semibold">{avgInterval}d</div>
+        </div>
+      </div>
+
+      <div className="card overflow-hidden" style={{ background: 'white' }}>
+        <table className="schedule-table">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Family / Pair</th>
+              <th style={{ textAlign: 'right' }}>Total</th>
+              <th>Last served</th>
+              <th>Days ago</th>
+              <th>Next assigned</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayed.map(s => {
+              const cls = classify(s);
+              return (
+                <tr key={s.worker.id}>
+                  <td>
+                    <span title={cls.label} style={{ fontSize: '1.125rem' }}>{cls.emoji}</span>
+                  </td>
+                  <td className="font-medium">{s.worker.name}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    <span className="font-mono text-sm">{s.total}</span>
+                  </td>
+                  <td className="text-xs ink-muted">
+                    {s.lastDate ? formatDateShort(s.lastDate) : <span className="italic">never</span>}
+                  </td>
+                  <td className="text-xs">
+                    {s.daysSince !== null ? (
+                      <span style={{ color: cls.tone === 'overdue' ? 'var(--danger)' : cls.tone === 'due' ? 'var(--warning)' : 'var(--ink-muted)', fontWeight: cls.tone === 'overdue' ? 600 : 400 }}>
+                        {s.daysSince}d
+                      </span>
+                    ) : <span className="ink-subtle italic">—</span>}
+                  </td>
+                  <td className="text-xs ink-muted">
+                    {s.nextDate ? formatDateShort(s.nextDate) : <span className="italic">none</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {sorted.length > 8 && (
+        <button className="btn btn-ghost text-xs mt-3" onClick={() => setShowAll(s => !s)}>
+          {showAll ? `↑ Show less` : `↓ Show all ${sorted.length}`}
+        </button>
+      )}
+
+      <details className="mt-4 text-xs ink-muted">
+        <summary className="cursor-pointer">How fairness is calculated →</summary>
+        <ul className="mt-2 space-y-1 ml-4 list-disc">
+          <li><strong>⭐ Never served</strong> — top priority for next food assignment</li>
+          <li><strong>🔴 Overdue</strong> — over 1.5× the average interval since last serving</li>
+          <li><strong>🟡 Due soon</strong> — between 0.75× and 1.5× the average interval</li>
+          <li><strong>🟢 Fair</strong> — recently served, doesn't need to be on rotation yet</li>
+        </ul>
+        <p className="mt-2">The food picker on the Schedule tab already suggests the most overdue family first. This view helps you defend the rotation when members ask why they're scheduled (or not).</p>
+      </details>
     </div>
   );
 }
@@ -1907,6 +2134,29 @@ function DataTab({ state, dispatch }) {
     URL.revokeObjectURL(url);
   };
 
+  const publishForMembers = () => {
+    // Build a clean members-facing JSON: drop admin-only fields
+    const membersData = {
+      meta: {
+        churchName: state.meta.churchName,
+        publishedAt: new Date().toISOString(),
+        version: APP_VERSION,
+      },
+      ministry: state.ministry,
+      workers: state.workers,
+      themes: state.themes,
+      schedule: state.schedule,
+      events: state.events || [],
+    };
+    const blob = new Blob([JSON.stringify(membersData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'data.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const importData = (file) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -1924,17 +2174,96 @@ function DataTab({ state, dispatch }) {
     reader.readAsText(file);
   };
 
+  const m = state.ministry || {};
+  const setMinistry = (patch) => dispatch({ type: 'UPDATE_MINISTRY', payload: patch });
+
+  const ministryComplete = m.headName && (m.whatsapp || m.messenger || m.phone || m.email);
+
   return (
     <div className="fade-in">
-      <SectionHeading eyebrow="Sync & backup" title="Data">
-        Export your schedule as a JSON file to share with your fellowship coordinator via Messenger, or import their version.
+      <SectionHeading eyebrow="Sync & publish" title="Data">
+        Backup and share with your fellowship coordinator. Publish a public, read-only view for FLCC members.
       </SectionHeading>
+
+      {/* Members publishing — primary feature */}
+      <div className="card p-6 mb-6" style={{ borderColor: 'var(--accent)' }}>
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+          <div>
+            <div className="text-xs font-medium tracking-widest uppercase" style={{ color: 'var(--accent)' }}>For FLCC Members</div>
+            <div className="font-display text-2xl font-semibold mt-1">Publish for Members</div>
+            <p className="ink-muted text-sm mt-2 max-w-xl">
+              Generate <code className="font-mono text-xs px-1 py-0.5 rounded" style={{ background: '#F4F4F0' }}>data.json</code> and upload it to your <code className="font-mono text-xs">flcc-schedule-os</code> repo on GitHub. Members visit <code className="font-mono text-xs">/members.html</code> to see the latest schedule, save events to their phone calendar, and report conflicts to {m.headName || 'the ministry head'}.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <button className="btn btn-accent" onClick={publishForMembers} disabled={!ministryComplete}>
+            ↓ Generate data.json
+          </button>
+          <button className="btn btn-soft" onClick={() => {
+            const text = `Members can now view our updated schedule at:\nhttps://ninlamster-blip.github.io/flcc-schedule-os/members.html\n\nTap your name to see your assignments, save events to your phone calendar, and report conflicts directly to ${m.headName || 'the ministry head'}.\n\n— FLCC Schedule OS`;
+            navigator.clipboard.writeText(text).then(() => alert('Announcement copied! Share it on Messenger, WhatsApp, or your church group chat.')).catch(() => alert('Copy failed.'));
+          }}>📋 Copy member announcement</button>
+        </div>
+
+        {!ministryComplete && (
+          <div className="text-xs p-3 rounded" style={{ background: 'var(--warning-soft)', color: 'var(--warning)' }}>
+            ⚠ Fill in the Ministry Contact below first — members need at least one channel to report conflicts.
+          </div>
+        )}
+
+        <details className="text-sm mt-3">
+          <summary className="cursor-pointer ink-muted">How to deploy →</summary>
+          <ol className="ink-muted text-xs mt-2 space-y-1 ml-4 list-decimal">
+            <li>Click "Generate data.json" above (downloads to your computer)</li>
+            <li>Go to your <code className="font-mono">flcc-schedule-os</code> repo on GitHub</li>
+            <li>Upload <code className="font-mono">data.json</code> and <code className="font-mono">members.html</code> to the repo root (drag-drop or "Add file → Upload")</li>
+            <li>Commit. GitHub Pages updates within ~1 minute.</li>
+            <li>Share <code className="font-mono">/members.html</code> link with your members</li>
+            <li>Each time you update the schedule: re-generate <code className="font-mono">data.json</code> and re-upload — members refresh their browser to see updates</li>
+          </ol>
+        </details>
+      </div>
+
+      {/* Ministry contact form */}
+      <div className="card p-6 mb-6">
+        <div className="font-display text-xl font-semibold mb-1">Ministry Contact</div>
+        <p className="ink-muted text-sm mb-4">When members report a conflict, the message goes to whichever channel they choose below. Fill in at least one.</p>
+
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Name</label>
+            <input className="input mt-1" value={m.headName || ''} onChange={e => setMinistry({ headName: e.target.value })} placeholder="e.g. Sis. Amazelle De Jesus" />
+          </div>
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Title / Role</label>
+            <input className="input mt-1" value={m.headTitle || ''} onChange={e => setMinistry({ headTitle: e.target.value })} placeholder="e.g. Fellowship Ministry Head" />
+          </div>
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">WhatsApp number</label>
+            <input className="input mt-1" value={m.whatsapp || ''} onChange={e => setMinistry({ whatsapp: e.target.value })} placeholder="+96512345678 (with country code)" />
+          </div>
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Messenger username</label>
+            <input className="input mt-1" value={m.messenger || ''} onChange={e => setMinistry({ messenger: e.target.value })} placeholder="username (without @)" />
+          </div>
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">SMS / phone</label>
+            <input className="input mt-1" value={m.phone || ''} onChange={e => setMinistry({ phone: e.target.value })} placeholder="+96512345678" />
+          </div>
+          <div>
+            <label className="text-xs font-medium tracking-widest uppercase ink-subtle">Email</label>
+            <input className="input mt-1" type="email" value={m.email || ''} onChange={e => setMinistry({ email: e.target.value })} placeholder="amazelle@example.com" />
+          </div>
+        </div>
+      </div>
 
       <div className="grid md:grid-cols-2 gap-4 mb-6">
         <div className="card p-6">
-          <div className="font-display text-xl font-semibold mb-2">Export</div>
-          <p className="ink-muted text-sm mb-4">Downloads a JSON file with all workers, schedule, themes, and settings. Send it to your coordinator via FB Messenger.</p>
-          <button className="btn btn-primary" onClick={exportData}>↓ Download JSON</button>
+          <div className="font-display text-xl font-semibold mb-2">Admin Backup (Export)</div>
+          <p className="ink-muted text-sm mb-4">Full admin backup with all settings. Send to your fellowship coordinator via FB Messenger to keep both of you in sync.</p>
+          <button className="btn btn-primary" onClick={exportData}>↓ Download admin JSON</button>
         </div>
         <div className="card p-6">
           <div className="font-display text-xl font-semibold mb-2">Import</div>
