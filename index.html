@@ -402,7 +402,7 @@ const SEED_WORKERS = [
   { id: 'sis-15', name: 'Grace Siangco', title: 'Sis.', type: 'individual', eligibleRoles: ['presider','songLeader'], status: 'active' },
   { id: 'sis-16', name: 'Annabelle Arciaga', title: 'Sis.', type: 'individual', eligibleRoles: ['presider'], status: 'active' },
   { id: 'sis-17', name: 'Jenarlyn Culao', title: 'Sis.', type: 'individual', eligibleRoles: ['presider','songLeader'], status: 'active' },
-  { id: 'sis-18', name: 'Laidz Pascual', title: 'Sis.', type: 'individual', eligibleRoles: ['presider','songLeader','preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active' },
+  { id: 'sis-18', name: 'Laidz Pascual', title: 'Sis.', type: 'individual', eligibleRoles: ['presider','songLeader','preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active', coreTeam: true },
   { id: 'sis-19', name: 'Irene Sabangan', title: 'Sis.', type: 'individual', eligibleRoles: ['preacher'], status: 'active' },
   { id: 'sis-20', name: 'Thara Embo', title: 'Sis.', type: 'individual', eligibleRoles: ['presider'], status: 'active' },
 
@@ -410,10 +410,10 @@ const SEED_WORKERS = [
   { id: 'bro-01', name: 'Dandreb Serna', title: 'Bro.', type: 'individual', eligibleRoles: ['songLeader'], status: 'active' },
   { id: 'bro-02', name: 'Bong Cas', title: 'Bro.', type: 'individual', eligibleRoles: ['songLeader'], status: 'active' },
   { id: 'bro-03', name: 'Elbert Siangco', title: 'Bro.', type: 'individual', eligibleRoles: ['songLeader'], status: 'active' },
-  { id: 'bro-04', name: 'Wilson Guerzon', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active' },
-  { id: 'bro-05', name: 'Allen Santos', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active' },
-  { id: 'bro-06', name: 'Ferdie Gajeton', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active' },
-  { id: 'bro-07', name: 'Edmund Gabriel', title: 'Bro.', type: 'individual', eligibleRoles: ['songLeader','preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active' },
+  { id: 'bro-04', name: 'Wilson Guerzon', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active', coreTeam: true },
+  { id: 'bro-05', name: 'Allen Santos', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active', coreTeam: true },
+  { id: 'bro-06', name: 'Ferdie Gajeton', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active', coreTeam: true },
+  { id: 'bro-07', name: 'Edmund Gabriel', title: 'Bro.', type: 'individual', eligibleRoles: ['songLeader','preacher','pastoralPrayer','communionAssistant1','communionAssistant2'], status: 'active', coreTeam: true },
   { id: 'bro-08', name: 'Edward Sario', title: 'Bro.', type: 'individual', eligibleRoles: ['preacher'], status: 'active' },
   { id: 'bro-09', name: 'Dave Vergara', title: 'Bro.', type: 'individual', eligibleRoles: ['presider','songLeader'], status: 'active' },
 
@@ -621,6 +621,22 @@ function entryConflicts(entry) {
     }
   }
   return conflicts;
+}
+
+// Determine if a given date is the first {service} of its month
+// e.g. isFirstServiceOfMonth('2026-04-03', 'Friday') → true (first Friday of April 2026)
+function isFirstServiceOfMonth(dateStr, service) {
+  const d = parseISODate(dateStr);
+  const dayOfMonth = d.getDate();
+  if (dayOfMonth > 7) return false;  // a 1st-of-week-day must be in days 1-7
+  const targetDow = service === 'Sunday' ? 0 : service === 'Friday' ? 5 : -1;
+  if (targetDow < 0) return false;
+  return d.getDay() === targetDow;
+}
+
+// Communion is conducted on the first Friday + first Sunday of each month at FLCC
+function isCommunionDate(entry) {
+  return isFirstServiceOfMonth(entry.date, entry.service);
 }
 
 // Suggest least-recently-used worker eligible for the role
@@ -1693,6 +1709,19 @@ function WorkerEditModal({ worker, onSave, onDelete, onClose }) {
               <option value="inactive">Inactive</option>
             </select>
           </div>
+          {w.eligibleRoles && (w.eligibleRoles.includes('communionAssistant1') || w.eligibleRoles.includes('communionAssistant2')) && (
+            <div className="card p-3" style={{ background: '#FFF1F5', borderColor: '#FECDD3' }}>
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={!!w.coreTeam} onChange={e => setW({ ...w, coreTeam: e.target.checked })} className="mt-1" />
+                <div>
+                  <div className="font-medium" style={{ color: '#BE123C' }}>🍞 Core Communion Team</div>
+                  <div className="text-xs ink-muted mt-0.5">
+                    Mark if this person serves communion regularly (first Friday/Sunday of each month). The system won't flag their repeated communion assignments as conflicts.
+                  </div>
+                </div>
+              </label>
+            </div>
+          )}
         </div>
         <div className="flex justify-between gap-2 mt-6">
           <div>
@@ -1736,6 +1765,8 @@ function FairnessTab({ state }) {
       </SectionHeading>
 
       <FoodRotationCard state={state} />
+
+      <CommunionRotationCard state={state} />
 
       <div className="card p-4 mb-6 flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -1985,6 +2016,222 @@ function FoodRotationCard({ state }) {
           <li><strong>🟢 Fair</strong> — recently served, doesn't need to be on rotation yet</li>
         </ul>
         <p className="mt-2">The food picker on the Schedule tab already suggests the most overdue family first. This view helps you defend the rotation when members ask why they're scheduled (or not).</p>
+      </details>
+    </div>
+  );
+}
+
+// =============================================================================
+// COMMUNION ROTATION CARD — shows the monthly first-Fri / first-Sun core team pattern
+// =============================================================================
+
+function CommunionRotationCard({ state }) {
+  // All communion-eligible workers
+  const communionEligible = useMemo(() =>
+    state.workers.filter(w =>
+      w.status === 'active' &&
+      (w.eligibleRoles?.includes('communionAssistant1') || w.eligibleRoles?.includes('communionAssistant2'))
+    ),
+    [state.workers]
+  );
+
+  // Communion entries = first Friday + first Sunday of each month
+  const communionEntries = useMemo(() => {
+    return state.schedule
+      .filter(e => isCommunionDate(e))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }, [state.schedule]);
+
+  const today = todayISO();
+
+  // For each worker, count their communion assignments
+  const workerStats = useMemo(() => {
+    return communionEligible.map(w => {
+      const assignments = communionEntries
+        .filter(e => e.roles.communionAssistant1 === w.id || e.roles.communionAssistant2 === w.id)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      const past = assignments.filter(e => e.date < today);
+      const future = assignments.filter(e => e.date >= today);
+      const last = past.length ? past[past.length - 1] : null;
+      const next = future.length ? future[0] : null;
+      return {
+        worker: w,
+        total: assignments.length,
+        past: past.length,
+        future: future.length,
+        last: last?.date || null,
+        next: next?.date || null,
+        nextService: next?.service || null,
+        isCore: !!w.coreTeam,
+      };
+    });
+  }, [communionEligible, communionEntries, today]);
+
+  // Sort: core team first, then by total descending
+  const sorted = useMemo(() => {
+    return workerStats.slice().sort((a, b) => {
+      if (a.isCore !== b.isCore) return a.isCore ? -1 : 1;
+      if (a.total !== b.total) return b.total - a.total;
+      return a.worker.name.localeCompare(b.worker.name);
+    });
+  }, [workerStats]);
+
+  // Group communion entries by month for the calendar grid display
+  const byMonth = useMemo(() => {
+    const m = new Map();
+    for (const e of communionEntries) {
+      const mo = monthKey(e.date);
+      if (!m.has(mo)) m.set(mo, { friday: null, sunday: null });
+      const rec = m.get(mo);
+      if (e.service === 'Friday') rec.friday = e;
+      else if (e.service === 'Sunday') rec.sunday = e;
+    }
+    return m;
+  }, [communionEntries]);
+
+  // Generate fairness defense text
+  const generateDefense = () => {
+    const lines = [];
+    lines.push(`🍞 FLCC Communion Rotation — Monthly Pattern`);
+    lines.push(`As of ${parseISODate(today).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}`);
+    lines.push('');
+    lines.push(`Communion is held on the FIRST Friday + FIRST Sunday of each month.`);
+    lines.push(`The Communion Team rotates among trusted core members.`);
+    lines.push('');
+    lines.push(`Core Communion Team:`);
+    for (const s of sorted.filter(x => x.isCore)) {
+      lines.push(`• ${workerDisplay(s.worker)} — ${s.total} assignment${s.total === 1 ? '' : 's'}${s.next ? `, next: ${formatDateShort(s.next)}` : ''}`);
+    }
+    lines.push('');
+    lines.push(`Recent communion schedule:`);
+    const recent = Array.from(byMonth.entries()).sort().slice(-4);
+    for (const [mo, rec] of recent) {
+      const fri = rec.friday;
+      const sun = rec.sunday;
+      const wd = (id) => {
+        const w = state.workers.find(x => x.id === id);
+        return w ? w.name : '?';
+      };
+      lines.push(`\n${formatMonthLabel(mo)}:`);
+      if (fri) lines.push(`  Friday ${formatDateShort(fri.date)} — ${wd(fri.roles.communionAssistant1)} + ${wd(fri.roles.communionAssistant2)}`);
+      if (sun) lines.push(`  Sunday ${formatDateShort(sun.date)} — ${wd(sun.roles.communionAssistant1)} + ${wd(sun.roles.communionAssistant2)}`);
+    }
+    lines.push('');
+    lines.push(`Repeated assignments for core team members are by design, not error. Thank you! 🙏`);
+    return lines.join('\n');
+  };
+
+  return (
+    <div className="card p-5 mb-6" style={{ borderColor: '#FECDD3', background: '#FFF1F5' }}>
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-4">
+        <div>
+          <div className="text-xs font-medium tracking-widest uppercase" style={{ color: '#BE123C' }}>🍞 Communion Rotation</div>
+          <div className="font-display text-2xl font-semibold mt-1">Monthly Pattern</div>
+          <p className="text-xs ink-muted mt-1">First Friday + First Sunday of each month · Core team rotates by design (not a conflict)</p>
+        </div>
+        <button className="btn btn-soft text-xs" onClick={() => {
+          navigator.clipboard.writeText(generateDefense()).then(() => alert('Communion rotation explanation copied! Paste it in your group chat.')).catch(() => alert('Copy failed.'));
+        }}>📋 Defense report</button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Communion dates</div>
+          <div className="font-display text-2xl font-semibold">{communionEntries.length}</div>
+        </div>
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Core team</div>
+          <div className="font-display text-2xl font-semibold" style={{ color: '#BE123C' }}>{workerStats.filter(s => s.isCore).length}</div>
+        </div>
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Total eligible</div>
+          <div className="font-display text-2xl font-semibold">{communionEligible.length}</div>
+        </div>
+        <div className="card p-3" style={{ background: 'white' }}>
+          <div className="text-xs ink-muted">Months tracked</div>
+          <div className="font-display text-2xl font-semibold">{byMonth.size}</div>
+        </div>
+      </div>
+
+      {/* Monthly pattern view */}
+      <div className="card p-4 mb-4" style={{ background: 'white' }}>
+        <div className="text-xs font-medium tracking-widest uppercase ink-subtle mb-3">Monthly schedule</div>
+        <div className="overflow-x-auto">
+          <table className="schedule-table">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>First Friday</th>
+                <th>Communion Team</th>
+                <th>First Sunday</th>
+                <th>Communion Team</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from(byMonth.entries()).sort().map(([mo, rec]) => {
+                const wd = (id) => {
+                  const w = state.workers.find(x => x.id === id);
+                  return w ? workerShort(w) : <span className="ink-subtle italic">TBD</span>;
+                };
+                return (
+                  <tr key={mo}>
+                    <td className="font-medium">{formatMonthLabel(mo)}</td>
+                    <td className="text-xs ink-muted">{rec.friday ? formatDateShort(rec.friday.date) : '—'}</td>
+                    <td className="text-sm">
+                      {rec.friday ? <>{wd(rec.friday.roles.communionAssistant1)} + {wd(rec.friday.roles.communionAssistant2)}</> : <span className="ink-subtle italic">—</span>}
+                    </td>
+                    <td className="text-xs ink-muted">{rec.sunday ? formatDateShort(rec.sunday.date) : '—'}</td>
+                    <td className="text-sm">
+                      {rec.sunday ? <>{wd(rec.sunday.roles.communionAssistant1)} + {wd(rec.sunday.roles.communionAssistant2)}</> : <span className="ink-subtle italic">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Worker fairness view */}
+      <div className="card overflow-hidden" style={{ background: 'white' }}>
+        <table className="schedule-table">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Worker</th>
+              <th style={{ textAlign: 'right' }}>Total</th>
+              <th>Last served</th>
+              <th>Next</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map(s => (
+              <tr key={s.worker.id}>
+                <td>
+                  {s.isCore ? <Pill tone="danger">Core Team</Pill> : <Pill tone="default">Eligible</Pill>}
+                </td>
+                <td className="font-medium">{workerDisplay(s.worker)}</td>
+                <td style={{ textAlign: 'right' }}><span className="font-mono text-sm">{s.total}</span></td>
+                <td className="text-xs ink-muted">{s.last ? formatDateShort(s.last) : <span className="italic">never</span>}</td>
+                <td className="text-xs">
+                  {s.next ? (
+                    <span>
+                      <span className="font-mono ink-muted">{formatDateShort(s.next)}</span>
+                      <span className="ink-subtle"> · {s.nextService}</span>
+                    </span>
+                  ) : <span className="ink-subtle italic">none</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <details className="mt-4 text-xs ink-muted">
+        <summary className="cursor-pointer">Why some people serve communion repeatedly →</summary>
+        <p className="mt-2">
+          Communion at FLCC - Abundance Church is held on the <strong>first Friday and first Sunday</strong> of every month — a fixed monthly cadence with a small trusted core team. The system marks core team members so their repeated communion assignments don't trigger conflict warnings. Their other roles (preacher, pastoral prayer) still appear in the normal Fairness view above to make sure those rotate fairly.
+        </p>
       </details>
     </div>
   );
