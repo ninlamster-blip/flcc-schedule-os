@@ -378,6 +378,9 @@ const RECURRENCE_TYPES = [
 
 const STORAGE_KEY = 'flcc-schedule-os-v1';
 const APP_VERSION = '1.0';
+const GH_TOKEN_KEY = 'flcc-schedule-gh-token-v1';
+const GH_REPO     = 'ninlamster-blip/flcc-schedule-os';
+const GH_FILE     = 'data.json';
 
 // =============================================================================
 // SEED DATA — extracted from Feb, Mar, Apr, May 2026 schedules
@@ -2371,6 +2374,57 @@ function generateMessengerText(state, month) {
 function DataTab({ state, dispatch }) {
   const fileInputRef = useRef(null);
 
+  // ── GitHub one-tap publish ────────────────────────────────────────────────
+  const [ghToken,      setGhToken]      = useState(() => { try { return localStorage.getItem(GH_TOKEN_KEY)||''; } catch { return ''; } });
+  const [ghTokenInput, setGhTokenInput] = useState('');
+  const [ghPublishing, setGhPublishing] = useState(false);
+  const [ghStatus,     setGhStatus]     = useState(''); // 'ok' | 'err' | ''
+
+  const saveGhToken = () => {
+    const v = ghTokenInput.trim();
+    if (!v.startsWith('ghp_') && !v.startsWith('github_pat_')) { alert('Token should start with ghp_ or github_pat_'); return; }
+    setGhToken(v); try { localStorage.setItem(GH_TOKEN_KEY, v); } catch {}
+    setGhTokenInput('');
+  };
+  const clearGhToken = () => { setGhToken(''); try { localStorage.removeItem(GH_TOKEN_KEY); } catch {}; };
+
+  const buildMembersData = () => ({
+    meta: { churchName: state.meta.churchName, publishedAt: new Date().toISOString(), version: APP_VERSION },
+    ministry: state.ministry,
+    workers: state.workers,
+    themes: state.themes,
+    schedule: state.schedule,
+    events: state.events || [],
+  });
+
+  const publishToGitHub = async () => {
+    if (!ghToken) { alert('Connect your GitHub token first.'); return; }
+    setGhPublishing(true); setGhStatus('');
+    try {
+      const content  = JSON.stringify(buildMembersData(), null, 2);
+      const encoded  = btoa(unescape(encodeURIComponent(content)));
+      const getResp  = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+        headers: { Authorization: `Bearer ${ghToken}`, Accept: 'application/vnd.github+json' },
+      });
+      const existing = getResp.ok ? await getResp.json() : null;
+      const putResp  = await fetch(`https://api.github.com/repos/${GH_REPO}/contents/${GH_FILE}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${ghToken}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Update schedule data — ${new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' })}`,
+          content: encoded,
+          ...(existing?.sha ? { sha: existing.sha } : {}),
+        }),
+      });
+      if (!putResp.ok) { const e = await putResp.json().catch(()=>({})); throw new Error(e.message || `HTTP ${putResp.status}`); }
+      setGhStatus('ok'); setTimeout(() => setGhStatus(''), 5000);
+    } catch (e) {
+      alert(`Publish failed: ${e.message}`);
+      setGhStatus('err'); setTimeout(() => setGhStatus(''), 5000);
+    } finally { setGhPublishing(false); }
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
   const exportData = () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -2432,45 +2486,65 @@ function DataTab({ state, dispatch }) {
         Backup and share with your fellowship coordinator. Publish a public, read-only view for FLCC members.
       </SectionHeading>
 
-      {/* Members publishing — primary feature */}
+      {/* Members publishing — one-tap GitHub */}
       <div className="card p-6 mb-6" style={{ borderColor: 'var(--accent)' }}>
-        <div className="flex items-start justify-between gap-3 flex-wrap mb-4">
+        <div className="text-xs font-medium tracking-widest uppercase mb-1" style={{ color: 'var(--accent)' }}>Publish to Members</div>
+        <div className="font-display text-2xl font-semibold mb-2">☁ Update to GitHub</div>
+        <p className="ink-muted text-sm mb-4">
+          One tap pushes the latest schedule live. Members see the update immediately — no downloads or file uploads needed.
+        </p>
+
+        {ghToken ? (
           <div>
-            <div className="text-xs font-medium tracking-widest uppercase" style={{ color: 'var(--accent)' }}>For FLCC Members</div>
-            <div className="font-display text-2xl font-semibold mt-1">Publish for Members</div>
-            <p className="ink-muted text-sm mt-2 max-w-xl">
-              Generate <code className="font-mono text-xs px-1 py-0.5 rounded" style={{ background: '#F4F4F0' }}>data.json</code> and upload it to your <code className="font-mono text-xs">flcc-schedule-os</code> repo on GitHub. Members visit <code className="font-mono text-xs">/members.html</code> to see the latest schedule, save events to their phone calendar, and report conflicts to {m.headName || 'the ministry head'}.
-            </p>
+            <div className="flex items-center gap-2 mb-4 p-3 rounded-lg" style={{ background: 'var(--success-soft)', border: '1px solid #BBF7D0' }}>
+              <div style={{ width:8, height:8, borderRadius:'50%', background:'var(--success)', flexShrink:0 }} />
+              <span className="text-sm font-medium" style={{ color:'var(--success)' }}>GitHub connected</span>
+              <button onClick={clearGhToken} className="text-xs ink-subtle ml-auto" style={{ background:'none', border:'none', cursor:'pointer', textDecoration:'underline' }}>Remove</button>
+            </div>
+            <button
+              onClick={publishToGitHub}
+              disabled={ghPublishing || !ministryComplete}
+              className="btn"
+              style={{
+                width:'100%', justifyContent:'center', padding:'14px', fontSize:'1rem', fontWeight:700, borderRadius:12,
+                background: ghStatus==='ok' ? 'var(--success)' : ghStatus==='err' ? 'var(--danger)' : 'var(--accent)',
+                color:'white',
+              }}
+            >
+              {ghPublishing ? '↻ Publishing…' : ghStatus==='ok' ? '✓ Published! Members can see it now' : ghStatus==='err' ? '⚠ Failed — tap to retry' : '☁ Publish schedule to GitHub'}
+            </button>
+            {!ministryComplete && <div className="text-xs mt-2 text-center" style={{ color:'var(--warning)' }}>Fill in the Ministry Contact below first.</div>}
           </div>
-        </div>
-
-        <div className="grid sm:grid-cols-2 gap-3 mb-4">
-          <button className="btn btn-accent" onClick={publishForMembers} disabled={!ministryComplete}>
-            ↓ Generate data.json
-          </button>
-          <button className="btn btn-soft" onClick={() => {
-            const text = `Members can now view our updated schedule at:\nhttps://ninlamster-blip.github.io/flcc-schedule-os/members.html\n\nTap your name to see your assignments, save events to your phone calendar, and report conflicts directly to ${m.headName || 'the ministry head'}.\n\n— FLCC Schedule OS`;
-            navigator.clipboard.writeText(text).then(() => alert('Announcement copied! Share it on Messenger, WhatsApp, or your church group chat.')).catch(() => alert('Copy failed.'));
-          }}>📋 Copy member announcement</button>
-        </div>
-
-        {!ministryComplete && (
-          <div className="text-xs p-3 rounded" style={{ background: 'var(--warning-soft)', color: 'var(--warning)' }}>
-            ⚠ Fill in the Ministry Contact below first — members need at least one channel to report conflicts.
+        ) : (
+          <div>
+            <p className="text-sm ink-muted mb-3">
+              <strong>One-time setup:</strong> Create a GitHub Personal Access Token with <em>Contents: Read &amp; write</em> for this repo, then paste it below. It stays on this device only.
+            </p>
+            <ol className="text-xs ink-muted mb-4 space-y-1 ml-4 list-decimal">
+              <li>Go to <strong>github.com</strong> → Settings → Developer settings → Personal access tokens → Fine-grained tokens</li>
+              <li>Generate new token → Repository access: <strong>flcc-schedule-os</strong> only</li>
+              <li>Permissions → Contents → <strong>Read and write</strong> → Generate</li>
+              <li>Copy the token (starts with <code className="font-mono" style={{ background:'#F4F4F0', padding:'1px 4px', borderRadius:4 }}>github_pat_</code>) and paste below</li>
+            </ol>
+            <div className="flex gap-2">
+              <input
+                className="input" type="password"
+                placeholder="github_pat_… or ghp_…"
+                value={ghTokenInput} onChange={e => setGhTokenInput(e.target.value)}
+                onKeyDown={e => e.key==='Enter' && saveGhToken()}
+              />
+              <button className="btn" style={{ background:'var(--success)', color:'white', flexShrink:0 }} onClick={saveGhToken} disabled={!ghTokenInput.trim()}>Connect</button>
+            </div>
           </div>
         )}
 
-        <details className="text-sm mt-3">
-          <summary className="cursor-pointer ink-muted">How to deploy →</summary>
-          <ol className="ink-muted text-xs mt-2 space-y-1 ml-4 list-decimal">
-            <li>Click "Generate data.json" above (downloads to your computer)</li>
-            <li>Go to your <code className="font-mono">flcc-schedule-os</code> repo on GitHub</li>
-            <li>Upload <code className="font-mono">data.json</code> and <code className="font-mono">members.html</code> to the repo root (drag-drop or "Add file → Upload")</li>
-            <li>Commit. GitHub Pages updates within ~1 minute.</li>
-            <li>Share <code className="font-mono">/members.html</code> link with your members</li>
-            <li>Each time you update the schedule: re-generate <code className="font-mono">data.json</code> and re-upload — members refresh their browser to see updates</li>
-          </ol>
-        </details>
+        <div className="flex gap-2 mt-4 pt-4" style={{ borderTop:'1px solid var(--border)' }}>
+          <button className="btn btn-soft text-xs" onClick={publishForMembers} disabled={!ministryComplete}>↓ Download data.json instead</button>
+          <button className="btn btn-soft text-xs" onClick={() => {
+            const text = `Members can now view our updated schedule at:\nhttps://ninlamster-blip.github.io/flcc-schedule-os/members.html\n\nTap your name to see your assignments, save events to your phone calendar, and report conflicts directly to ${m.headName || 'the ministry head'}.\n\n— FLCC Schedule OS`;
+            navigator.clipboard.writeText(text).then(() => alert('Announcement copied!')).catch(() => alert('Copy failed.'));
+          }}>📋 Copy announcement</button>
+        </div>
       </div>
 
       {/* Ministry contact form */}
