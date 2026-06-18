@@ -11,13 +11,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-<!-- Tailwind -->
+<!-- Tailwind (in head so styles apply before first paint) -->
 <script src="https://cdn.tailwindcss.com"></script>
-
-<!-- React + Babel (CDN, no build step required) -->
-<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <style>
   :root {
@@ -339,6 +334,11 @@
 </head>
 <body>
 <div id="root"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#FAFAF5"><p style="color:#18181B;font-family:Georgia,serif;font-size:1.25rem;letter-spacing:-0.01em">Loading…</p></div></div>
+
+<!-- React + Babel moved to body so the Loading… fallback paints before scripts download -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <script type="text/babel" data-presets="react">
 const { useState, useEffect, useMemo, useReducer, useRef } = React;
