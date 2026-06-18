@@ -3084,7 +3084,22 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(e) { return { err: e }; }
+  render() {
+    if (this.state.err) return (
+      <div style={{ padding: '2rem', fontFamily: 'monospace' }}>
+        <h2 style={{ color: '#B91C1C', marginBottom: '0.5rem' }}>Something went wrong</h2>
+        <pre style={{ background: '#FEE2E2', padding: '1rem', borderRadius: 6, whiteSpace: 'pre-wrap', fontSize: 13 }}>{this.state.err.message}{'\n\n'}{this.state.err.stack}</pre>
+        <p style={{ marginTop: '1rem', fontSize: 13, color: '#52525B' }}>Open browser DevTools → Console for more detail. You can also try clearing site data: DevTools → Application → Storage → Clear site data.</p>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);
 </script>
 </body>
 </html>
