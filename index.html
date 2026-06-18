@@ -573,6 +573,9 @@ function migrate(state) {
     headTitle: 'Fellowship Ministry Head',
     whatsapp: '', messenger: '', phone: '', email: '',
   };
+  if (!s.settings) s.settings = {};
+  if (!Array.isArray(s.settings.ignoredDateMismatches)) s.settings.ignoredDateMismatches = [];
+  if (!s.currentMonth) s.currentMonth = defaultState().currentMonth;
   s.workers = s.workers.map(w => ({ ...w, birthday: w.birthday || '' }));
   return s;
 }
