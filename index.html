@@ -3044,8 +3044,46 @@ const TABS = [
 function App() {
   const [state, dispatch] = useReducer(reducer, null, () => migrate(loadState()) || defaultState());
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [syncNotice, setSyncNotice] = useState(null);
+  // Snapshot of this browser's save timestamp from BEFORE the save effect below
+  // runs (which would otherwise stamp "now" and make local always look newest).
+  const [initialLocalTime] = useState(() => {
+    const raw = loadState();
+    return raw?.lastUpdated ? new Date(raw.lastUpdated).getTime() : 0;
+  });
 
   useEffect(() => { saveState(state); }, [state]);
+
+  // On open, check GitHub for a more recently published copy of the schedule.
+  // Local edits are stored per-browser (localStorage), so a browser that never
+  // published still only shows its own state — this pulls in the latest
+  // published data.json when it's newer than what this browser last saved.
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`./${GH_FILE}?t=${Date.now()}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(remote => {
+        if (cancelled || !remote || !Array.isArray(remote.schedule)) return;
+        const remoteTime = remote.meta?.publishedAt ? new Date(remote.meta.publishedAt).getTime() : 0;
+        if (remoteTime <= initialLocalTime) return;
+        const merged = migrate({
+          ...defaultState(),
+          ...state,
+          meta: { ...state.meta, churchName: remote.meta?.churchName || state.meta.churchName },
+          ministry: remote.ministry || state.ministry,
+          workers: remote.workers || state.workers,
+          themes: remote.themes || state.themes,
+          schedule: remote.schedule || state.schedule,
+          events: remote.events || state.events,
+        });
+        dispatch({ type: 'HYDRATE', payload: merged });
+        setSyncNotice(
+          `Loaded the latest published schedule${remote.meta?.publishedAt ? ' (published ' + new Date(remote.meta.publishedAt).toLocaleString() + ')' : ''}.`
+        );
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <div className="min-h-screen bg-app">
@@ -3072,6 +3110,15 @@ function App() {
           </nav>
         </div>
       </header>
+
+      {syncNotice && (
+        <div className="max-w-7xl mx-auto px-6 pt-4 no-print">
+          <div className="flex items-center justify-between gap-3 text-xs rounded-md px-3 py-2" style={{ background: 'var(--accent-soft, #EEF2FF)', color: 'var(--accent)' }}>
+            <span>{syncNotice}</span>
+            <button className="btn-soft text-xs" onClick={() => setSyncNotice(null)}>Dismiss</button>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         {activeTab === 'dashboard' && <DashboardTab state={state} dispatch={dispatch} />}
