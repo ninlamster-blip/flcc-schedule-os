@@ -328,6 +328,7 @@ const ip = (date, service, teamId) => {
   return {
     id: `ip-${date}-${service.toLowerCase()}`,
     date, service, teamId,
+    workersText: '',
     startTime: def?.defaultStart || null,
     endTime: def?.defaultEnd || null,
     notes: '',
@@ -526,6 +527,7 @@ function reducer(state, action) {
     case 'UPDATE_INTERCESSORY': return { ...state, intercessory: state.intercessory.map(i => i.id === action.entry.id ? action.entry : i) };
     case 'DELETE_INTERCESSORY': return { ...state, intercessory: state.intercessory.filter(i => i.id !== action.id) };
     case 'SET_INTERCESSORY_TEAM': return { ...state, intercessory: state.intercessory.map(i => i.id === action.id ? { ...i, teamId: action.teamId } : i) };
+    case 'SET_INTERCESSORY_WORKERS': return { ...state, intercessory: state.intercessory.map(i => i.id === action.id ? { ...i, workersText: action.workersText } : i) };
 
     case 'ADD_MEETING': return { ...state, meetings: [...state.meetings, action.meeting] };
     case 'UPDATE_MEETING': return { ...state, meetings: state.meetings.map(m => m.id === action.meeting.id ? action.meeting : m) };
@@ -937,6 +939,7 @@ function IntercessorySection({ service, entries, state, dispatch, mainData }) {
               <tr>
                 <th>Date</th>
                 <th>Team</th>
+                <th>Intercessors</th>
                 {mainData && <th>Coordinator</th>}
                 {mainData && <th>Presider</th>}
                 <th>Time</th>
@@ -992,6 +995,15 @@ function IntercessoryRow({ entry, state, dispatch, mainData }) {
           />
         )}
       </td>
+      <td>
+        <input
+          className="input text-xs"
+          style={{ minWidth: '11rem' }}
+          value={entry.workersText || ''}
+          placeholder="Names from this ministry"
+          onChange={ev => dispatch({ type: 'SET_INTERCESSORY_WORKERS', id: entry.id, workersText: ev.target.value })}
+        />
+      </td>
       {mainData && (
         <td className="text-xs">
           {coord ? <span style={{ color: 'var(--ink-muted)' }}>{coord}</span> : <span className="ink-subtle italic">—</span>}
@@ -1021,7 +1033,7 @@ function AddIntercessoryModal({ month, state, dispatch, onClose }) {
     if (state.intercessory.some(e => e.id === id)) { alert('That date+service already exists.'); return; }
     const def = SERVICE_TYPES_FOR_INTERCESSORY.find(s => s.key === service);
     dispatch({ type: 'ADD_INTERCESSORY', entry: {
-      id, date, service, teamId: null,
+      id, date, service, teamId: null, workersText: '',
       startTime: def?.defaultStart || null, endTime: def?.defaultEnd || null, notes: '',
     }});
     onClose();
@@ -1559,11 +1571,11 @@ function PrintTab({ state, mainData }) {
             {Array.from({ length: Math.max(fridays.length, sundays.length, botr.length, 1) }, (_, i) => (
               <tr key={i}>
                 <td style={{ ...tdIP, background: '#EFF6FF' }}>{botr[i] ? formatDateShort(botr[i].date).toUpperCase().replace('-',' ') : 'N/A'}</td>
-                <td style={{ ...tdIP, background: '#EFF6FF' }}>{botr[i] ? (teamMeta(state, botr[i].teamId)?.name || 'TBD') : 'N/A'}</td>
+                <td style={{ ...tdIP, background: '#EFF6FF' }}>{botr[i] ? (<>{teamMeta(state, botr[i].teamId)?.name || 'TBD'}{botr[i].workersText && <div style={{ fontSize: '0.65rem', fontStyle: 'italic' }}>{botr[i].workersText}</div>}</>) : 'N/A'}</td>
                 <td style={{ ...tdIP, background: '#FEFCE8' }}>{fridays[i] ? formatDateShort(fridays[i].date).toUpperCase().replace('-',' ') : ''}</td>
-                <td style={{ ...tdIP, background: '#FEFCE8' }}>{fridays[i] ? (teamMeta(state, fridays[i].teamId)?.name || '—') : ''}</td>
+                <td style={{ ...tdIP, background: '#FEFCE8' }}>{fridays[i] ? (<>{teamMeta(state, fridays[i].teamId)?.name || '—'}{fridays[i].workersText && <div style={{ fontSize: '0.65rem', fontStyle: 'italic' }}>{fridays[i].workersText}</div>}</>) : ''}</td>
                 <td style={{ ...tdIP, background: '#F0FDF4' }}>{sundays[i] ? formatDateShort(sundays[i].date).toUpperCase().replace('-',' ') : ''}</td>
-                <td style={{ ...tdIP, background: '#F0FDF4' }}>{sundays[i] ? (teamMeta(state, sundays[i].teamId)?.name || '—') : ''}</td>
+                <td style={{ ...tdIP, background: '#F0FDF4' }}>{sundays[i] ? (<>{teamMeta(state, sundays[i].teamId)?.name || '—'}{sundays[i].workersText && <div style={{ fontSize: '0.65rem', fontStyle: 'italic' }}>{sundays[i].workersText}</div>}</>) : ''}</td>
               </tr>
             ))}
           </tbody>
@@ -1667,6 +1679,7 @@ function generateMessengerText(state, month) {
     out += `\n${svc.label.toUpperCase()} (${formatTime12(svc.defaultStart)})\n`;
     for (const e of entries) {
       out += `• ${formatDateShort(e.date)} — ${teamMeta(state, e.teamId)?.name || 'TBD'}\n`;
+      if (e.workersText) out += `   ${e.workersText}\n`;
     }
   }
   out += `\n\nPRAYER MEETINGS\n`;
