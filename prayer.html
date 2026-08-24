@@ -880,6 +880,26 @@ function IntercessoryTab({ state, dispatch, mainData }) {
 
   const [addOpen, setAddOpen] = useState(false);
 
+  // Every Friday and Sunday in the displayed month, skipping dates already present.
+  // BOTR-NECK is irregular, so it stays manual via "+ Add Date".
+  const fillMonth = () => {
+    const [y, mo] = month.split('-').map(Number);
+    const existing = new Set(state.intercessory.map(e => e.id));
+    const toAdd = [];
+    const daysInMonth = new Date(y, mo, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = new Date(y, mo - 1, d).getDay();
+      const service = dow === 5 ? 'Friday' : dow === 0 ? 'Sunday' : null;
+      if (!service) continue;
+      const date = `${month}-${String(d).padStart(2, '0')}`;
+      const entry = ip(date, service, null);
+      if (!existing.has(entry.id)) toAdd.push(entry);
+    }
+    if (toAdd.length === 0) { alert(`Every Friday and Sunday in ${formatMonthLabel(month)} is already listed.`); return; }
+    if (!confirm(`Add ${toAdd.length} date${toAdd.length === 1 ? '' : 's'} to ${formatMonthLabel(month)}? Teams start Unassigned.`)) return;
+    toAdd.forEach(entry => dispatch({ type: 'ADD_INTERCESSORY', entry }));
+  };
+
   const grouped = SERVICE_TYPES_FOR_INTERCESSORY.map(svc => ({
     service: svc,
     entries: monthEntries.filter(e => e.service === svc.key),
@@ -897,7 +917,10 @@ function IntercessoryTab({ state, dispatch, mainData }) {
           <div className="font-display text-2xl font-semibold">{formatMonthLabel(month)}</div>
           <button className="btn btn-ghost" onClick={() => dispatch({ type: 'SET_CURRENT_MONTH', month: nextMonth(month) })}>→</button>
         </div>
-        <button className="btn btn-accent" onClick={() => setAddOpen(true)}>+ Add Date</button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button className="btn btn-soft" onClick={fillMonth}>+ Add all Fridays &amp; Sundays</button>
+          <button className="btn btn-accent" onClick={() => setAddOpen(true)}>+ Add Date</button>
+        </div>
       </div>
 
       {grouped.map(g => (
